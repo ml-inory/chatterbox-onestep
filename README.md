@@ -2,6 +2,15 @@
 
 精度 cosine ≈ 0.9932  |  推理耗时 181.08 ms  |  模型大小 124.7 MB  |  实时率 RTF ≈ 0.018
 
+## 源码 / 复现
+
+想要复现导出与编译流程、查看或修改 Python/C++ SDK 源码（含 OpenAI-Compatible server/client）、
+运行 DSP 自测？源码仓库：**https://github.com/ml-inory/chatterbox-onestep**
+
+- `model_convert/`：ONNX 导出 + Pulsar2 编译脚本（可复现本 AXMODEL）
+- `python/` / `cpp/`：完整 SDK 源码与示例
+- `cpp/tests/`：FFT/Griffin-Lim 本地自测
+
 ## 性能与实时率（RTF）
 
 | 场景 | 耗时 | RTF |
