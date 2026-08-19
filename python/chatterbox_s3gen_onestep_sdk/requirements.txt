@@ -1,0 +1,2 @@
+numpy
+axengine @ git+https://github.com/AXERA-TECH/pyaxengine.git

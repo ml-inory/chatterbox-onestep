@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+build/
+build-*/
+CMakeFiles/
+CMakeCache.txt
+*.egg-info/

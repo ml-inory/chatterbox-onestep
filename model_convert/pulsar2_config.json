@@ -1,0 +1,89 @@
+{
+  "input": "/workspace/export/model.onnx",
+  "output_dir": "/workspace/compile",
+  "output_name": "model.axmodel",
+  "work_dir": "/workspace/compile/work",
+  "model_type": "ONNX",
+  "target_hardware": "AX650",
+  "npu_mode": "NPU1",
+  "input_shapes": "tokens:1x256;token_len:1;embedding:1x192;z:1x80x512",
+  "onnx_opt": {
+    "disable_onnx_optimization": false,
+    "enable_onnxsim": false,
+    "model_check": true
+  },
+  "quant": {
+    "input_configs": [
+      {
+        "tensor_name": "tokens",
+        "calibration_dataset": "/workspace/export/calib_data/tokens.tar.gz",
+        "calibration_format": "Numpy",
+        "calibration_size": 30,
+        "calibration_mean": [],
+        "calibration_std": []
+      },
+      {
+        "tensor_name": "token_len",
+        "calibration_dataset": "/workspace/export/calib_data/token_len.tar.gz",
+        "calibration_format": "Numpy",
+        "calibration_size": 30,
+        "calibration_mean": [],
+        "calibration_std": []
+      },
+      {
+        "tensor_name": "embedding",
+        "calibration_dataset": "/workspace/export/calib_data/embedding.tar.gz",
+        "calibration_format": "Numpy",
+        "calibration_size": 30,
+        "calibration_mean": [],
+        "calibration_std": []
+      },
+      {
+        "tensor_name": "z",
+        "calibration_dataset": "/workspace/export/calib_data/z.tar.gz",
+        "calibration_format": "Numpy",
+        "calibration_size": 30,
+        "calibration_mean": [],
+        "calibration_std": []
+      }
+    ],
+    "calibration_method": "MinMax",
+    "precision_analysis": true,
+    "precision_analysis_method": "EndToEnd",
+    "highest_mix_precision": false
+  },
+  "input_processors": [
+    {
+      "tensor_name": "tokens",
+      "tensor_format": "RGB",
+      "tensor_layout": "NCHW",
+      "src_format": "RGB",
+      "src_dtype": "S32",
+      "src_layout": "NCHW"
+    },
+    {
+      "tensor_name": "token_len",
+      "tensor_format": "RGB",
+      "tensor_layout": "NCHW",
+      "src_format": "RGB",
+      "src_dtype": "S32",
+      "src_layout": "NCHW"
+    },
+    {
+      "tensor_name": "embedding",
+      "tensor_format": "RGB",
+      "tensor_layout": "NCHW",
+      "src_format": "RGB",
+      "src_dtype": "FP32",
+      "src_layout": "NCHW"
+    },
+    {
+      "tensor_name": "z",
+      "tensor_format": "RGB",
+      "tensor_layout": "NCHW",
+      "src_format": "RGB",
+      "src_dtype": "FP32",
+      "src_layout": "NCHW"
+    }
+  ]
+}
