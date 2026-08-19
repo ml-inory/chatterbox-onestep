@@ -130,3 +130,30 @@ make -j$(nproc)
 - 板端实测：Python wav 请求约 10s（numpy Griffin-Lim），C++ wav 请求约 23s（20 次迭代）；
 - `cpp/assets/` 提供 `mel_inv_24k.bin`（线性谱逆矩阵）与 `default_embedding.bin`（内置音色）；
 - DSP 核心见 `cpp/include/dsp.hpp`，本地自测见 `cpp/tests/gl_test.cpp`（FFT 对 numpy 误差约 1e-5）。
+
+## 音色克隆（Voice Cloning，embedding 级）
+
+本模型以 192 维 xvector 音色 embedding 为条件，支持"参考音频 → 换音色"的 embedding 级克隆
+（完整官方克隆还含 10s 参考 prompt 条件，当前板端 AXMODEL 未导出该路径，需要可另行定制）。
+
+**步骤 1（宿主，torch）**：从参考音频提取 embedding
+
+```bash
+python3 python/extract_voice_embedding.py --wav ref.wav \
+    --ckpt-dir /path/to/chatterbox_models --out ref_embedding.npy
+```
+
+**步骤 2（板端）**：调用 OpenAI 服务时带上 `voice.embedding`
+
+```bash
+curl -X POST http://<board>:8000/v1/audio/speech -H 'Content-Type: application/json' \
+  -d "$(python3 - <<'PY'
+import json, numpy as np
+emb = np.load('ref_embedding.npy').reshape(-1).tolist()
+print(json.dumps({"input": [12,34,56], "voice": {"embedding": emb}, "response_format": "wav"}))
+PY
+)"
+```
+
+> `input` 为 S3 speech tokens（文本 → token 的 T3 在宿主完成）；也可在 `python/openai_client.py`
+> 基础上扩展，直接读 `ref_embedding.npy` 填 `voice.embedding`。
