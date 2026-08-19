@@ -100,7 +100,8 @@ python3 python/openai_client.py --tokens-npy sample_input/tokens.npy --out out.w
 
 ### C++ 版（自实现 Bluestein FFT + Griffin-Lim，仅依赖 AX Engine）
 
-> 本仓库 `cpp/` 已包含完整源码与 aarch64 预编译产物（`cpp/bin/`，Release + fast-math）。
+> 本仓库 `cpp/bin/` 提供 aarch64 预编译产物（Release + fast-math）；C++ 完整源码见
+> GitHub：https://github.com/ml-inory/chatterbox-onestep
 
 ```bash
 mkdir -p cpp/build && cd cpp/build
