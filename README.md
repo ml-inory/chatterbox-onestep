@@ -100,7 +100,7 @@ python3 python/openai_client.py --tokens-npy sample_input/tokens.npy --out out.w
 
 ### C++ 版（自实现 Bluestein FFT + Griffin-Lim，仅依赖 AX Engine）
 
-> C++ 完整源码见 GitHub：https://github.com/ml-inory/chatterbox-onestep
+> 本仓库 `cpp/` 已包含完整源码与 aarch64 预编译产物（`cpp/bin/`，Release + fast-math）。
 
 ```bash
 mkdir -p cpp/build && cd cpp/build
@@ -108,6 +108,12 @@ cmake .. -DCMAKE_TOOLCHAIN_FILE=${AX_RUNTIME_ROOT}/toolchain.cmake -DAX_RUNTIME_
 make -j$(nproc)
 ./openai_server --model ../../models/model.axmodel --assets ../assets --port 8000
 ./openai_client --url http://127.0.0.1:8000/v1/audio/speech --tokens-file <tokens_int32.bin> --out out.wav
+```
+
+不想自己编译也可以直接用 `cpp/bin/` 里的预编译产物（板端加 `LD_LIBRARY_PATH=/soc/lib`）：
+
+```bash
+./cpp/bin/openai_server --model models/model.axmodel --assets cpp/assets --port 8000
 ```
 
 说明：
