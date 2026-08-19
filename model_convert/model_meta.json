@@ -51,7 +51,7 @@
     }
   ],
   "opset": 17,
-  "torch_onnx_cosine": 1.0000000953095773,
+  "torch_onnx_cosine": 1.0,
   "export_attempts": [
     {
       "path": "torch.onnx.export(dynamo=False, opset=17)",
@@ -82,7 +82,7 @@
       "status": "ok",
       "detail": "cosine=1.000000",
       "static_shapes": null,
-      "cosine": 1.0000000953095773,
+      "cosine": 1.0,
       "error": ""
     }
   ]
