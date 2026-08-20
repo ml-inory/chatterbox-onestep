@@ -169,3 +169,19 @@ PY
 
 > `input` 为 S3 speech tokens（文本 → token 的 T3 在宿主完成）；也可在 `python/openai_client.py`
 > 基础上扩展，直接读 `ref_embedding.npy` 填 `voice.embedding`。
+
+### 克隆示例音频
+
+用 LJ001-0001 参考人声克隆的板端合成结果（模型：model_clone.axmodel）：
+
+**参考音频（被克隆的人声）**
+
+<audio controls src="examples/audio/clone_reference.wav"></audio>
+
+- [clone_reference.wav](examples/audio/clone_reference.wav)
+
+**克隆合成结果（3.66s，24kHz）**
+
+<audio controls src="examples/audio/clone_output.wav"></audio>
+
+- [clone_output.wav](examples/audio/clone_output.wav)
