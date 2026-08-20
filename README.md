@@ -147,6 +147,8 @@ prompt token）与音色 embedding 一起输入，还原参考说话人更完整
 - 单句上限 99 个 S3 token（约 4-5 秒）；NPU3 三核编译
 - 提示：prompt_token 与生成 token 必须在宿主侧拼接（图内 Concat 会触发 AX650 NPU 的
   `AxConcat` wdma bug，见 `reports/` 与 model_convert 注释）
+- 单步学生对噪声 z 敏感（个别 z 会静音）：server 的 clone 路径默认做 **4 次 z 平均**
+  （`--clone-z-ensemble` 可调），消除偶发静音
 
 **步骤 1（宿主，torch）**：从参考音频提取 embedding
 
