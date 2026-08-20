@@ -101,6 +101,7 @@ class TTSApp:
 
         self.session = ModelSession(args.model)
         self.clone_session = ModelSession(args.clone_model) if getattr(args, "clone_model", "") else None
+        self.clone_z_ensemble = getattr(args, "clone_z_ensemble", 4)
         self.preprocess = preprocess
         here = Path(__file__).resolve().parent
         self.mel_basis, self.mel_inv, self.default_emb = _load_pkg_assets(here)
@@ -138,9 +139,14 @@ class TTSApp:
             token_len_all = np.asarray([157 + gen_len], dtype=np.int32)
             pf_pad = np.zeros((1, 314, 80), dtype=np.float32)
             pf_pad[:, : min(pf.shape[1], 314)] = pf[:, :314, :]
-            z = np.random.randn(1, 80, 512).astype(np.float32)
-            feeds = [tokens_all, token_len_all, emb, z, pf_pad]
-            raw = self.clone_session.run_named(feeds)
+            # 单步学生对 z 敏感（个别 z 会静音）：多 z 平均增强稳定性
+            z_ensemble = self.clone_z_ensemble
+            mels = []
+            for _ in range(max(1, z_ensemble)):
+                z = np.random.randn(1, 80, 512).astype(np.float32)
+                feeds = [tokens_all, token_len_all, emb, z, pf_pad]
+                mels.append(np.asarray(self.clone_session.run_named(feeds)[0], dtype=np.float32))
+            raw = [np.mean(mels, axis=0)]
         else:
             feeds = self.preprocess(tokens, tlen, emb, None)
             raw = self.session.run_named(feeds)
@@ -206,6 +212,7 @@ def main():
     p = argparse.ArgumentParser(description="OpenAI-Compatible 板端 S3Gen TTS（torch-free）")
     p.add_argument("--model", default="models/model.axmodel")
     p.add_argument("--clone-model", default="", help="完整克隆模型 model_clone.axmodel（可选）")
+    p.add_argument("--clone-z-ensemble", type=int, default=4, help="克隆路径多 z 平均次数（缓解单步 z 敏感）")
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=8000)
     args = p.parse_args()
