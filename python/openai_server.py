@@ -100,19 +100,50 @@ class TTSApp:
         from chatterbox_s3gen_onestep_sdk.preprocess import preprocess
 
         self.session = ModelSession(args.model)
+        self.clone_session = ModelSession(args.clone_model) if getattr(args, "clone_model", "") else None
         self.preprocess = preprocess
         here = Path(__file__).resolve().parent
         self.mel_basis, self.mel_inv, self.default_emb = _load_pkg_assets(here)
+        # clone 模型默认 prompt（可用 extract_voice_embedding.py 生成后放在同目录）
+        self.default_prompt = None
+        if self.clone_session:
+            pt_path, pf_path = here / "ref_prompt_token.npy", here / "ref_prompt_feat.npy"
+            if pt_path.exists() and pf_path.exists():
+                self.default_prompt = (np.load(pt_path), np.load(pf_path))
 
-    def synthesize(self, tokens: list[int], embedding=None, fmt="wav") -> bytes:
+    def synthesize(self, tokens: list[int], voice=None, fmt="wav") -> bytes:
         tokens = np.clip(np.asarray(tokens, dtype=np.int32).reshape(1, -1), 0, 6560)
         tlen = np.asarray([tokens.shape[1]], dtype=np.int32)
         if tokens.shape[1] < 256:
             pad = np.zeros((1, 256 - tokens.shape[1]), dtype=np.int32)
             tokens = np.concatenate([tokens, pad], axis=1)
+        embedding = None if voice in (None, "default") else (voice.get("embedding") if isinstance(voice, dict) else voice)
         emb = self.default_emb if embedding is None else np.asarray(embedding, dtype=np.float32).reshape(1, -1)
-        feeds = self.preprocess(tokens, tlen, emb, None)
-        raw = self.session.run_named(feeds)
+        if self.clone_session:
+            # 完整克隆路径（5 输入）：tokens_all = prompt_token + 生成 token（宿主侧拼接，
+            # 避免图内 Concat——AX650 NPU 对 AxConcat 有 wdma bug）+ embedding + z + prompt_feat
+            pt, pf = self.default_prompt if self.default_prompt is not None else (None, None)
+            if isinstance(voice, dict):
+                pt = np.asarray(voice.get("prompt_token"), dtype=np.int32).reshape(1, -1) if voice.get("prompt_token") else pt
+                pf = np.asarray(voice.get("prompt_feat"), dtype=np.float32).reshape(1, -1, 80) if voice.get("prompt_feat") else pf
+            if pt is None or pf is None:
+                raise ValueError("clone 模型需要 prompt：请用 extract_voice_embedding.py 生成 ref_prompt_token/ref_prompt_feat.npy 放同目录，或请求 voice.prompt_token/prompt_feat")
+            gen = np.asarray(tokens, dtype=np.int32).reshape(-1)[:99]
+            if len(gen) < 99:
+                gen = np.pad(gen, (0, 99 - len(gen)), mode="edge")
+            pt_pad = np.zeros(157, dtype=np.int32)
+            pt_pad[: min(pt.shape[1], 157)] = pt[:, :157].reshape(-1)
+            tokens_all = np.concatenate([pt_pad, gen]).reshape(1, 256)
+            gen_len = min(int(tlen[0]), 99)
+            token_len_all = np.asarray([157 + gen_len], dtype=np.int32)
+            pf_pad = np.zeros((1, 314, 80), dtype=np.float32)
+            pf_pad[:, : min(pf.shape[1], 314)] = pf[:, :314, :]
+            z = np.random.randn(1, 80, 512).astype(np.float32)
+            feeds = [tokens_all, token_len_all, emb, z, pf_pad]
+            raw = self.clone_session.run_named(feeds)
+        else:
+            feeds = self.preprocess(tokens, tlen, emb, None)
+            raw = self.session.run_named(feeds)
         mel = np.asarray(raw[0], dtype=np.float32)[:, :, :int(tlen[0]) * 2]  # (1,80,T)
         if fmt == "mel":
             return json.dumps({"mel": mel[0].tolist()}).encode("utf-8")
@@ -157,9 +188,8 @@ def make_handler(app: TTSApp):
             if fmt not in ("wav", "mel"):
                 return self._json(400, {"error": {"message": f"response_format '{fmt}' not supported (wav|mel)", "type": "invalid_request_error", "code": None}})
             voice = req.get("voice")
-            embedding = None if voice in (None, "default") else voice.get("embedding") if isinstance(voice, dict) else voice
             try:
-                audio = app.synthesize(inp, embedding=embedding, fmt=fmt)
+                audio = app.synthesize(inp, voice=voice, fmt=fmt)
             except Exception as e:  # noqa: BLE001
                 return self._json(500, {"error": {"message": f"synthesis failed: {e}", "type": "server_error", "code": None}})
             ctype = {"wav": "audio/wav", "mel": "application/json"}[fmt]
@@ -175,6 +205,7 @@ def make_handler(app: TTSApp):
 def main():
     p = argparse.ArgumentParser(description="OpenAI-Compatible 板端 S3Gen TTS（torch-free）")
     p.add_argument("--model", default="models/model.axmodel")
+    p.add_argument("--clone-model", default="", help="完整克隆模型 model_clone.axmodel（可选）")
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=8000)
     args = p.parse_args()

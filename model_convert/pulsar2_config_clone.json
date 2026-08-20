@@ -1,0 +1,92 @@
+{
+  "input_shapes": "tokens_all:1x256;token_len_all:1;embedding:1x192;z:1x80x512;prompt_feat:1x314x80",
+  "npu_mode": "NPU3",
+  "quant": {
+    "input_configs": [
+      {
+        "tensor_name": "tokens_all",
+        "calibration_dataset": "/workspace/export/calib_data/tokens_all.tar.gz",
+        "calibration_format": "Numpy",
+        "calibration_size": 30,
+        "calibration_mean": [],
+        "calibration_std": []
+      },
+      {
+        "tensor_name": "token_len_all",
+        "calibration_dataset": "/workspace/export/calib_data/token_len_all.tar.gz",
+        "calibration_format": "Numpy",
+        "calibration_size": 30,
+        "calibration_mean": [],
+        "calibration_std": []
+      },
+      {
+        "tensor_name": "embedding",
+        "calibration_dataset": "/workspace/export/calib_data/embedding.tar.gz",
+        "calibration_format": "Numpy",
+        "calibration_size": 30,
+        "calibration_mean": [],
+        "calibration_std": []
+      },
+      {
+        "tensor_name": "z",
+        "calibration_dataset": "/workspace/export/calib_data/z.tar.gz",
+        "calibration_format": "Numpy",
+        "calibration_size": 30,
+        "calibration_mean": [],
+        "calibration_std": []
+      },
+      {
+        "tensor_name": "prompt_feat",
+        "calibration_dataset": "/workspace/export/calib_data/prompt_feat.tar.gz",
+        "calibration_format": "Numpy",
+        "calibration_size": 30,
+        "calibration_mean": [],
+        "calibration_std": []
+      }
+    ],
+    "calibration_method": "MinMax",
+    "highest_mix_precision": false
+  },
+  "input_processors": [
+    {
+      "tensor_name": "tokens_all",
+      "tensor_format": "RGB",
+      "tensor_layout": "NCHW",
+      "src_format": "RGB",
+      "src_dtype": "S32",
+      "src_layout": "NCHW"
+    },
+    {
+      "tensor_name": "token_len_all",
+      "tensor_format": "RGB",
+      "tensor_layout": "NCHW",
+      "src_format": "RGB",
+      "src_dtype": "S32",
+      "src_layout": "NCHW"
+    },
+    {
+      "tensor_name": "embedding",
+      "tensor_format": "RGB",
+      "tensor_layout": "NCHW",
+      "src_format": "RGB",
+      "src_dtype": "FP32",
+      "src_layout": "NCHW"
+    },
+    {
+      "tensor_name": "z",
+      "tensor_format": "RGB",
+      "tensor_layout": "NCHW",
+      "src_format": "RGB",
+      "src_dtype": "FP32",
+      "src_layout": "NCHW"
+    },
+    {
+      "tensor_name": "prompt_feat",
+      "tensor_format": "RGB",
+      "tensor_layout": "NCHW",
+      "src_format": "RGB",
+      "src_dtype": "FP32",
+      "src_layout": "NCHW"
+    }
+  ]
+}

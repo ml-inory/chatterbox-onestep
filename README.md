@@ -136,6 +136,18 @@ make -j$(nproc)
 本模型以 192 维 xvector 音色 embedding 为条件，支持"参考音频 → 换音色"的 embedding 级克隆
 （完整官方克隆还含 10s 参考 prompt 条件，当前板端 AXMODEL 未导出该路径，需要可另行定制）。
 
+### 完整克隆（model_clone.axmodel，prompt 条件）
+
+`models/model_clone.axmodel` 为完整官方克隆路径：参考音频的 **prompt 条件**（prompt mel +
+prompt token）与音色 embedding 一起输入，还原参考说话人更完整的音色细节。
+
+- 输入（5 个）：`tokens_all[1,256]`（prompt_token 157 + 生成区 token ≤99，宿主侧拼接）、
+  `token_len_all[1]`、`embedding[1,192]`、`z[1,80,512]`、`prompt_feat[1,314,80]`
+- 输出：mel[1,80,198]（生成区，截取 token_len_all−157 帧 ×2）
+- 单句上限 99 个 S3 token（约 4-5 秒）；NPU3 三核编译
+- 提示：prompt_token 与生成 token 必须在宿主侧拼接（图内 Concat 会触发 AX650 NPU 的
+  `AxConcat` wdma bug，见 `reports/` 与 model_convert 注释）
+
 **步骤 1（宿主，torch）**：从参考音频提取 embedding
 
 ```bash

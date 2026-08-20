@@ -1,0 +1,99 @@
+{
+  "model_name": "chatterbox-s3gen-onestep-clone",
+  "framework": "pytorch",
+  "inputs": [
+    {
+      "name": "tokens_all",
+      "shape": [
+        1,
+        256
+      ],
+      "dtype": "int32",
+      "layout": "NCHW"
+    },
+    {
+      "name": "token_len_all",
+      "shape": [
+        1
+      ],
+      "dtype": "int32",
+      "layout": "NCHW"
+    },
+    {
+      "name": "embedding",
+      "shape": [
+        1,
+        192
+      ],
+      "dtype": "float32",
+      "layout": "NCHW"
+    },
+    {
+      "name": "z",
+      "shape": [
+        1,
+        80,
+        512
+      ],
+      "dtype": "float32",
+      "layout": "NCHW"
+    },
+    {
+      "name": "prompt_feat",
+      "shape": [
+        1,
+        314,
+        80
+      ],
+      "dtype": "float32",
+      "layout": "NCHW"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "mel",
+      "shape": [
+        1,
+        80,
+        198
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "opset": 17,
+  "torch_onnx_cosine": 1.0000001118359447,
+  "export_attempts": [
+    {
+      "path": "torch.onnx.export(dynamo=False, opset=17)",
+      "status": "ok",
+      "detail": "",
+      "static_shapes": null,
+      "cosine": null,
+      "error": ""
+    },
+    {
+      "path": "static shape \u68c0\u67e5",
+      "status": "ok",
+      "detail": "\u5168\u90e8\u9759\u6001",
+      "static_shapes": null,
+      "cosine": null,
+      "error": ""
+    },
+    {
+      "path": "onnxruntime \u63a8\u7406",
+      "status": "ok",
+      "detail": "",
+      "static_shapes": null,
+      "cosine": null,
+      "error": ""
+    },
+    {
+      "path": "torch-vs-ORT \u5bf9\u5206 mel",
+      "status": "ok",
+      "detail": "cosine=1.000000",
+      "static_shapes": null,
+      "cosine": 1.0000001118359447,
+      "error": ""
+    }
+  ]
+}
