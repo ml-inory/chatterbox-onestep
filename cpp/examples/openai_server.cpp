@@ -12,6 +12,7 @@
 
 #include "dsp.hpp"
 #include "model_runner.hpp"
+#include "hift_dsp.hpp"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -103,9 +104,12 @@ void SendResponse(int fd, const HttpResponse& resp) {
     if (!resp.body.empty()) send(fd, resp.body.data(), resp.body.size(), 0);
 }
 
-HttpResponse HandleRequest(ModelRunner& runner, const std::vector<float>& mel_inv,
+HttpResponse HandleRequest(ModelRunner& runner, ModelRunner* f0_runner, ModelRunner* dec_runner,
+                           const std::vector<float>& linear_w, float linear_b,
+                           const std::vector<float>& mel_inv,
                            const std::vector<float>& default_emb,
                            const std::vector<float>& win,
+                           const std::vector<float>& hann16,
                            const std::string& method, const std::string& path,
                            const std::string& body) {
     using namespace dsp;
@@ -181,7 +185,37 @@ HttpResponse HandleRequest(ModelRunner& runner, const std::vector<float>& mel_in
         r.body.assign(j.begin(), j.end());
         return r;
     }
-    std::vector<float> x = GriffinLim(mel_log10, frames, mel_inv, win);
+    std::vector<float> x;
+    if (f0_runner != nullptr && dec_runner != nullptr) {
+        // ---- HiFT 神经声码器（f0/decode 两个 AXMODEL + 宿主 DSP）----
+        constexpr int kTMel = hift::kTMel;
+        std::vector<float> mel_pad(80 * kTMel, hift::kPadVal);
+        for (int m = 0; m < dsp::kNMels; ++m) {
+            for (int t = 0; t < frames; ++t) mel_pad[m * kTMel + t] = mel_log10[m * frames + t];
+        }
+        std::vector<std::vector<float>> f0_out = f0_runner->Run({mel_pad});
+        const std::vector<float>& f0 = f0_out.at(0);  // 198
+
+        std::mt19937 gen(std::random_device{}());
+        std::uniform_real_distribution<float> ud(-static_cast<float>(M_PI), static_cast<float>(M_PI));
+        std::normal_distribution<float> nd(0.0f, 1.0f);
+        std::vector<float> phase(hift::kHarmonics, 0.0f);
+        std::vector<float> noise(hift::kHarmonics * hift::kSrcLen);
+        for (int h = 0; h < hift::kHarmonics; ++h) phase[h] = ud(gen);
+        phase[0] = 0.0f;
+        for (float& v : noise) v = nd(gen);
+
+        std::vector<float> s = hift::SourceFromF0(f0, phase, noise, linear_w, linear_b);
+        std::vector<float> s_stft;
+        hift::SourceStft(s, hann16, s_stft);
+        std::vector<std::vector<float>> dec_out = dec_runner->Run({mel_pad, s_stft});
+        const std::vector<float>& raw_mag = dec_out.at(0);  // 9 x 23761
+        const std::vector<float>& raw_ph = dec_out.at(1);
+        x = hift::Istft16(raw_mag, raw_ph, hann16);
+        x.resize(static_cast<size_t>(frames) * hift::kUpsample);
+    } else {
+        x = GriffinLim(mel_log10, frames, mel_inv, win);
+    }
     WriteWav(x, &r.body);
     r.ctype = "audio/wav";
     return r;
@@ -191,14 +225,18 @@ HttpResponse HandleRequest(ModelRunner& runner, const std::vector<float>& mel_in
 
 int main(int argc, char** argv) {
     std::string model_path = "models/model.axmodel";
+    std::string f0_model = "models/hifift_f0.axmodel";
+    std::string dec_model = "models/hifift_decode.axmodel";
     std::string assets_dir = ".";
     int port = 8000;
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--model") && i + 1 < argc) model_path = argv[++i];
+        else if (!std::strcmp(argv[i], "--f0-model") && i + 1 < argc) f0_model = argv[++i];
+        else if (!std::strcmp(argv[i], "--decode-model") && i + 1 < argc) dec_model = argv[++i];
         else if (!std::strcmp(argv[i], "--assets") && i + 1 < argc) assets_dir = argv[++i];
         else if (!std::strcmp(argv[i], "--port") && i + 1 < argc) port = std::atoi(argv[++i]);
         else {
-            std::fprintf(stderr, "usage: %s [--model m.axmodel] [--assets dir] [--port N]\n", argv[0]);
+            std::fprintf(stderr, "usage: %s [--model m.axmodel] [--f0-model f.axmodel] [--decode-model d.axmodel] [--assets dir] [--port N]\n", argv[0]);
             return 1;
         }
     }
@@ -211,16 +249,33 @@ int main(int argc, char** argv) {
     };
     const std::vector<char> inv_raw = read_bin("mel_inv_24k.bin");
     const std::vector<char> emb_raw = read_bin("default_embedding.bin");
+    const std::vector<char> lw_raw = read_bin("hift_linear_w.bin");
+    const std::vector<char> lb_raw = read_bin("hift_linear_b.bin");
     if (inv_raw.size() != dsp::kNBins * dsp::kNMels * 4 || emb_raw.size() != 192 * 4) {
         throw std::runtime_error("asset size mismatch");
     }
     std::vector<float> mel_inv(dsp::kNBins * dsp::kNMels);
     std::vector<float> default_emb(192);
+    std::vector<float> linear_w(hift::kHarmonics);
+    float linear_b = 0.0f;
     std::memcpy(mel_inv.data(), inv_raw.data(), inv_raw.size());
     std::memcpy(default_emb.data(), emb_raw.data(), emb_raw.size());
+    std::memcpy(linear_w.data(), lw_raw.data(), lw_raw.size());
+    std::memcpy(&linear_b, lb_raw.data(), 4);
 
     ModelRunner runner(model_path, "model");
+    ModelRunner* f0_runner = nullptr;
+    ModelRunner* dec_runner = nullptr;
+    try {
+        f0_runner = new ModelRunner(f0_model, "hifift_f0");
+        dec_runner = new ModelRunner(dec_model, "hifift_decode");
+        std::fprintf(stderr, "[openai-server] vocoder: HiFT NPU (f0+decode)\n");
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "HiFT vocoder models unavailable, fallback to Griffin-Lim: %s\n", e.what());
+        delete f0_runner; delete dec_runner; f0_runner = nullptr; dec_runner = nullptr;
+    }
     const std::vector<float> win = dsp::Hann();
+    const std::vector<float> hann16 = hift::Hann16();
 
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd < 0) return 1;
@@ -268,7 +323,8 @@ int main(int argc, char** argv) {
         }
         HttpResponse resp;
         try {
-            resp = HandleRequest(runner, mel_inv, default_emb, win, method, path, body);
+            resp = HandleRequest(runner, f0_runner, dec_runner, linear_w, linear_b,
+                                 mel_inv, default_emb, win, hann16, method, path, body);
         } catch (const std::exception& e) {
             resp.code = 500;
             resp.ctype = "text/plain";

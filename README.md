@@ -1,6 +1,6 @@
 # chatterbox-s3gen-onestep AXMODEL
 
-精度 cosine ≈ 0.9932  |  推理耗时 181.08 ms  |  模型大小 124.7 MB  |  实时率 RTF ≈ 0.018
+精度 cosine ≈ 0.9932  |  S3Gen 单步 181 ms  |  HiFT 声码器上板（U16）  |  端到端 RTF ≈ 0.3–1.1
 
 ## 源码 / 复现
 
@@ -15,12 +15,27 @@
 
 | 场景 | 耗时 | RTF |
 | --- | --- | --- |
-| AX650C 板端 NPU（本模型，单步） | 181 ms / 512 帧（10.24s 音频） | **≈ 0.018** |
+| AX650C 板端 NPU：S3Gen 单步（mel） | 181 ms / 512 帧（10.24s 音频） | **≈ 0.018** |
+| AX650C 板端 NPU：端到端（S3Gen + HiFT 声码器，C++ server） | ~0.7 s / 2.3s 音频 | ≈ 0.3 |
+| AX650C 板端 NPU：端到端（Python server，base/clone） | ~1.1 / ~1.9 s | ≈ 0.5 |
 | NVIDIA L4 GPU（同模型，单步） | 47.2 ms | ≈ 0.0046 |
 | 教师 10 步（L4，参考） | ~540 ms/句 | ≈ 0.06 |
 
 RTF = 生成耗时 / 音频时长，< 1 即快于实时。本模型 S3Gen 单步在板端生成 10 秒音频的 mel 只需约
 0.18 秒；相比教师 10 步，单步化带来约 10 倍加速（RTF 0.06 → 0.018，同板卡口径）。
+端到端（含声码器）在板端仍快于实时（C++ RTF ≈ 0.3）。
+
+## 声码器：HiFT 神经声码器（上板，替代 Griffin-Lim）
+
+早期板端用 numpy/C++ Griffin-Lim（GL）做 mel→wav，高频损失严重、听感发糊
+（>4kHz 能量约为 torch 版一半）。现已把 HiFT 神经声码器（20.8M 参数）编译上板：
+
+- `models/hifift_f0.axmodel`：mel → f0（纯卷积，U8，3.5 MB）
+- `models/hifift_decode.axmodel`：mel + 源激励 STFT → raw（U16 双输出，27 MB）
+- 源激励合成 / 16 点 STFT / ISTFT 为宿主侧廉价 DSP（Python numpy 或 C++，无 torch）
+- 效果：>4kHz 能量 0.14（GL）→ 0.28（HiFT 板端，≈ torch 0.27），频谱质心 1294 → ~2500
+
+导出/编译细节见 `model_convert/hift_export.py` 与报告。
 
 ## 快速开始（只需两步）
 
@@ -100,14 +115,18 @@ A: 进入 `model_convert/`，确保 Pulsar2 可用后运行 `bash compile_pulsar
 输出 wav（`response_format=wav`）或 mel（`response_format=mel`）。**Python 与 C++ 两版均可在 AX 板上运行，
 不依赖 torch / ffmpeg / FFTW**；文本 → token 的 T3 环节在宿主（torch）完成后调用本服务。
 
-### Python 版（依赖 numpy + pyaxengine）
+### Python 版（依赖 numpy + pyaxengine，HiFT 声码器默认启用）
 
 ```bash
-python3 python/openai_server.py --model models/model.axmodel --port 8000
+python3 python/openai_server.py --model models/model.axmodel \
+    --clone-model models/model_clone.axmodel --port 8000
 python3 python/openai_client.py --tokens-npy sample_input/tokens.npy --out out.wav
 ```
 
-### C++ 版（自实现 Bluestein FFT + Griffin-Lim，仅依赖 AX Engine）
+> 声码器默认使用 `models/hifift_f0.axmodel` + `models/hifift_decode.axmodel`（HiFT）；
+> 若缺省或指定不存在的路径则回退 Griffin-Lim。
+
+### C++ 版（HiFT 声码器，自实现 16 点 FFT/ISTFT + 源激励，仅依赖 AX Engine）
 
 > 本仓库 `cpp/bin/` 提供 aarch64 预编译产物（Release + fast-math）；C++ 完整源码见
 > GitHub：https://github.com/ml-inory/chatterbox-onestep
@@ -116,20 +135,26 @@ python3 python/openai_client.py --tokens-npy sample_input/tokens.npy --out out.w
 mkdir -p cpp/build && cd cpp/build
 cmake .. -DCMAKE_TOOLCHAIN_FILE=${AX_RUNTIME_ROOT}/toolchain.cmake -DAX_RUNTIME_ROOT=${AX_RUNTIME_ROOT}
 make -j$(nproc)
-./openai_server --model ../../models/model.axmodel --assets ../assets --port 8000
+./openai_server --model ../../models/model.axmodel \
+    --f0-model ../../models/hifift_f0.axmodel --decode-model ../../models/hifift_decode.axmodel \
+    --assets ../assets --port 8000
 ./openai_client --url http://127.0.0.1:8000/v1/audio/speech --tokens-file <tokens_int32.bin> --out out.wav
 ```
 
 不想自己编译也可以直接用 `cpp/bin/` 里的预编译产物（板端加 `LD_LIBRARY_PATH=/soc/lib`）：
 
 ```bash
-./cpp/bin/openai_server --model models/model.axmodel --assets cpp/assets --port 8000
+./cpp/bin/openai_server --model models/model.axmodel \
+    --f0-model models/hifift_f0.axmodel --decode-model models/hifift_decode.axmodel \
+    --assets cpp/assets --port 8000
 ```
 
 说明：
-- 板端实测：Python wav 请求约 10s（numpy Griffin-Lim），C++ wav 请求约 23s（20 次迭代）；
-- `cpp/assets/` 提供 `mel_inv_24k.bin`（线性谱逆矩阵）与 `default_embedding.bin`（内置音色）；
-- DSP 核心见 `cpp/include/dsp.hpp`，本地自测见 `cpp/tests/gl_test.cpp`（FFT 对 numpy 误差约 1e-5）。
+- 板端实测（HiFT 声码器）：Python base ~1.1s / clone（4-z）~1.9s，C++ base ~0.7s；
+- `cpp/assets/` 提供 `mel_inv_24k.bin`（线性谱逆矩阵）、`default_embedding.bin`（内置音色）
+  与 `hift_linear_w/b.bin`（HiFT 源激励线性层权重）；
+- HiFT 宿主 DSP 见 `python/hift_vocoder.py` 与 `cpp/include/hift_dsp.hpp`
+  （源激励/STFT/ISTFT 对 numpy 误差 ~1e-7，与 torch 原版一致）。
 
 ## 音色克隆（Voice Cloning，embedding 级）
 
@@ -182,7 +207,7 @@ PY
 
 - [clone_reference.wav](examples/audio/clone_reference.wav)
 
-**克隆合成结果（3.66s，24kHz）**
+**克隆合成结果（3.60s，24kHz）**
 
 <audio controls src="examples/audio/clone_output.wav"></audio>
 

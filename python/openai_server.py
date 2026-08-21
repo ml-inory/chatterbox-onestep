@@ -30,6 +30,8 @@ from pathlib import Path
 
 import numpy as np
 
+from hift_vocoder import wav_bytes
+
 SR = 24000
 N_FFT = 1920
 HOP = 480
@@ -93,6 +95,19 @@ def mel_to_wav(mel_log10: np.ndarray, mel_inv: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
+def _load_hift_vocoder(args) -> "HiftVocoder | None":
+    """指定 --f0-model/--decode-model 时启用 HiFT 神经声码器；缺省回退 Griffin-Lim。"""
+    f0 = getattr(args, "f0_model", "") or ""
+    dec = getattr(args, "decode_model", "") or ""
+    if not (f0 and dec):
+        return None
+    here = Path(__file__).resolve().parent
+    lw = np.load(here / "hift_linear_w.npy")
+    lb = np.load(here / "hift_linear_b.npy")
+    from hift_vocoder import HiftVocoder
+    return HiftVocoder(f0, dec, lw, lb)
+
+
 class TTSApp:
     def __init__(self, args):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -105,6 +120,11 @@ class TTSApp:
         self.preprocess = preprocess
         here = Path(__file__).resolve().parent
         self.mel_basis, self.mel_inv, self.default_emb = _load_pkg_assets(here)
+        self.hift = _load_hift_vocoder(args)
+        if self.hift is not None:
+            print("[openai-server] vocoder: HiFT NPU (f0+decode axmodel), 无 GL 兜底")
+        else:
+            print("[openai-server] vocoder: Griffin-Lim（未指定 --f0-model/--decode-model）")
         # clone 模型默认 prompt（可用 extract_voice_embedding.py 生成后放在同目录）
         self.default_prompt = None
         if self.clone_session:
@@ -120,7 +140,8 @@ class TTSApp:
             tokens = np.concatenate([tokens, pad], axis=1)
         embedding = None if voice in (None, "default") else (voice.get("embedding") if isinstance(voice, dict) else voice)
         emb = self.default_emb if embedding is None else np.asarray(embedding, dtype=np.float32).reshape(1, -1)
-        if self.clone_session:
+        use_clone = self.clone_session and isinstance(voice, dict) and bool(voice.get("prompt_token")) and bool(voice.get("prompt_feat"))
+        if use_clone:
             # 完整克隆路径（5 输入）：tokens_all = prompt_token + 生成 token（宿主侧拼接，
             # 避免图内 Concat——AX650 NPU 对 AxConcat 有 wdma bug）+ embedding + z + prompt_feat
             pt, pf = self.default_prompt if self.default_prompt is not None else (None, None)
@@ -153,6 +174,8 @@ class TTSApp:
         mel = np.asarray(raw[0], dtype=np.float32)[:, :, :int(tlen[0]) * 2]  # (1,80,T)
         if fmt == "mel":
             return json.dumps({"mel": mel[0].tolist()}).encode("utf-8")
+        if self.hift is not None:
+            return wav_bytes(self.hift.synth(mel, int(tlen[0]) * 2))
         wav = mel_to_wav(mel, self.mel_inv)
         return wav
 
@@ -213,6 +236,8 @@ def main():
     p.add_argument("--model", default="models/model.axmodel")
     p.add_argument("--clone-model", default="", help="完整克隆模型 model_clone.axmodel（可选）")
     p.add_argument("--clone-z-ensemble", type=int, default=4, help="克隆路径多 z 平均次数（缓解单步 z 敏感）")
+    p.add_argument("--f0-model", default="models/hifift_f0.axmodel", help="HiFT f0 声码器模型（缺省 models/hifift_f0.axmodel）")
+    p.add_argument("--decode-model", default="models/hifift_decode.axmodel", help="HiFT decode 声码器模型（缺省 models/hifift_decode.axmodel）")
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=8000)
     args = p.parse_args()
